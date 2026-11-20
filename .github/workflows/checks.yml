@@ -1,0 +1,39 @@
+name: Storefront quality gates
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
+  supabase:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - uses: supabase/setup-cli@v1
+        with: { version: latest }
+      - name: Start disposable services and apply release migrations
+        run: supabase start -x studio,imgproxy,logflare,vector,supavisor
+      - run: npx playwright install --with-deps chromium
+      - name: Exercise real Auth, Storage, PostgREST and competing transactions
+        run: |
+          set -a
+          eval "$(supabase status -o env)"
+          set +a
+          export DISPOSABLE_SUPABASE=yes
+          node tests/service-integration.mjs
+          export VITE_SUPABASE_URL="$API_URL" VITE_SUPABASE_PUBLISHABLE_KEY="$ANON_KEY"
+          VITE_SITE_URL=https://staging.example.test npm run build
+          npx playwright test connected.spec.ts
