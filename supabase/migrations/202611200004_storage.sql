@@ -30,4 +30,3 @@ CREATE POLICY store_asset_manage_read ON storage.objects
     AND private.staff ('product_manager'))
     OR (bucket_id IN ('brand-assets', 'homepage-banners')
     AND private.staff ('super_admin')));
-

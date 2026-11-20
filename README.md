@@ -23,7 +23,7 @@ npm run dev
 | `VITE_SUPABASE_PUBLISHABLE_KEY` | Publishable key (or legacy **anon** key), protected by RLS.                                   |
 | `VITE_SITE_URL`                 | Final canonical HTTPS origin with no trailing slash. Leave blank for a non-indexable preview. |
 
-Vite embeds `VITE_*` at build time. **Never put a secret/service-role key, database password or SMTP credential in any `VITE_*` variable.** Restart after changing local env; rebuild the hosted frontend after changing build variables. For browser access to a local CLI from another machine, expose the gateway over an approved HTTPS origin instead of embedding localhost in a shared build.
+Vite embeds `VITE_*` at build time. The build rejects secret or service-role keys in the public Supabase key setting. **Never put a secret/service-role key, database password or SMTP credential in any `VITE_*` variable.** Restart after changing local env; rebuild the hosted frontend after changing build variables. For browser access to a local CLI from another machine, expose the gateway over an approved HTTPS origin instead of embedding localhost in a shared build.
 
 ## Architecture and routes
 
@@ -46,6 +46,8 @@ Vite embeds `VITE_*` at build time. **Never put a secret/service-role key, datab
 | `0005_catalog`     | Six original products and photos, bilingual copy, English translations, 199 MAD, legacy offers, free shipping and original WhatsApp/phone. No invented stock.                                                     |
 | `0006_settings`    | Social URLs, SEO descriptions and safe product routes.                                                                                                                                                            |
 | `0007_publication` | Catalog realtime, language selection, category imagery, MAD/COD constraints and additional indexes.                                                                                                               |
+
+| `0008_asset_paths` | Portable bucket references, brand logo, scheduled homepage campaigns, and retirement invalidation for public catalog subscribers. |
 
 ## Connect Supabase safely
 
@@ -85,5 +87,3 @@ GitHub hosts source and Actions, **not** the live commerce backend. `.github/wor
 4. Attach your verified HTTPS domain, update Supabase Auth redirect allowlists, redeploy, check deep links and reset emails. Inspect browser logs for CSP issues if using a custom backend domain. Set up backups, monitoring, email delivery, incident contact and legal review before accepting real orders.
 
 Never commit `.env*` (except the empty `.env.example`), DB dumps or customer exports. Original `index.html` is preserved in the base Git revision documented in the audit.
-
-`0008_asset_paths` allows validated bucket-relative image references in addition to the original HTTPS URLs. Uploaded image references therefore work on both the local CLI gateway and a hosted HTTPS project. The build rejects a secret or service-role key in the public Supabase-key setting.

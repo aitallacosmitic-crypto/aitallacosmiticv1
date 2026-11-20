@@ -8,4 +8,3 @@ ALTER TABLE public.site_settings
 -- URL-safe SKU is used for the canonical product route.
 ALTER TABLE public.products
   ADD CONSTRAINT safe_sku CHECK (sku ~ '^[A-Za-z0-9_-]{1,80}$');
-

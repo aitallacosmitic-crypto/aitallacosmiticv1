@@ -51,4 +51,3 @@ CREATE TRIGGER invalidate_retirement
   published ON public.products FOR EACH ROW
   WHEN (old.active AND old.published AND NOT (new.active AND new.published))
   EXECUTE FUNCTION private.invalidate_retirement ();
-

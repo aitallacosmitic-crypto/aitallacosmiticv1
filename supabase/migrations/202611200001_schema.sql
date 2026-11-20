@@ -202,4 +202,3 @@ CREATE INDEX movement_product ON public.inventory_movements (product_id, created
 CREATE INDEX history_order ON public.order_status_history (order_id, created_at);
 
 CREATE INDEX usage_promotion ON public.promotion_usage (promotion_id);
-

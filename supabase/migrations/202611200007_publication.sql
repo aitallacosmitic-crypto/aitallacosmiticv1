@@ -45,4 +45,3 @@ CREATE INDEX items_product ON public.order_items (product_id);
 CREATE INDEX reviews_approved ON public.reviews (product_id, created_at DESC)
 WHERE
   approved;
-

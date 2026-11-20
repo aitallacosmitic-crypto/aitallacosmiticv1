@@ -267,7 +267,7 @@ export function Editor({
           <label key={k}>
             {t(...words[k])}
             {field.options ? (
-              <select {...props}>
+              <select {...props} aria-label={t(...words[k])}>
                 {field.optional && <option value="">—</option>}
                 {field.options.map(([v, n]) => (
                   <option key={v} value={v}>

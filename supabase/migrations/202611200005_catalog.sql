@@ -117,4 +117,3 @@ FROM
   public.products
 WHERE
   sku = 'slow';
-

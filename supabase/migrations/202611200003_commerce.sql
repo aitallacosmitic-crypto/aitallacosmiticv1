@@ -331,4 +331,3 @@ GRANT EXECUTE ON FUNCTION private.staff (public.staff_role[]) TO anon, authentic
 REVOKE ALL ON FUNCTION public.place_order (jsonb, text, jsonb, uuid, numeric), public.quote_order (jsonb, text), public.adjust_stock (uuid, integer, text), public.update_order (uuid, public.order_state, text) FROM public, anon;
 
 GRANT EXECUTE ON FUNCTION public.place_order (jsonb, text, jsonb, uuid, numeric), public.quote_order (jsonb, text), public.adjust_stock (uuid, integer, text), public.update_order (uuid, public.order_state, text) TO authenticated;
-
