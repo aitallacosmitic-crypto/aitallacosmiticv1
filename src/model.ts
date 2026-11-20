@@ -25,6 +25,14 @@ export type Product = LocalName & {
 };
 export type Settings = {
   brand: string;
+  logo_url?: string | null;
+  campaign_url?: string | null;
+  campaign_ar?: string | null;
+  campaign_fr?: string | null;
+  campaign_en?: string | null;
+  campaign_active?: boolean;
+  campaign_start?: string | null;
+  campaign_end?: string | null;
   instagram_url?: string | null;
   facebook_url?: string | null;
   available_languages?: Lang[];

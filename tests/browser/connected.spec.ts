@@ -81,3 +81,71 @@ test("real customer signs in, searches, buys with a quantity offer and sees the 
     page.getByRole("heading", { name: "منطقة مخصصة للإدارة" }),
   ).toBeVisible();
 });
+
+test("authorized product manager creates a product with two stored photos, adjusts stock and publishes it", async ({
+  page,
+}) => {
+  test.skip(
+    process.env.DISPOSABLE_SUPABASE !== "yes",
+    "Requires disposable local Supabase services",
+  );
+  const api = process.env.API_URL;
+  if (api !== "http://127.0.0.1:54321") throw Error("Local services required");
+  const admin = createClient(api, process.env.SERVICE_ROLE_KEY!, {
+      auth: { persistSession: false },
+    }),
+    email = `editor-${randomUUID()}@example.test`,
+    password = randomUUID() + "Aa!",
+    sku = "fixture-" + randomUUID();
+  const { data, error } = await admin.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true,
+  });
+  if (error || !data.user) throw Error("Fixture provisioning failed");
+  const grant = await admin
+    .from("user_roles")
+    .insert({ user_id: data.user.id, role: "product_manager" });
+  if (grant.error) throw Error("Fixture role assignment failed");
+  await page.goto("/admin");
+  await page.getByLabel("اللغة").selectOption("en");
+  await page.getByLabel("Email", { exact: true }).fill(email);
+  await page.getByLabel("Password", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByRole("button", { name: "Add product", exact: true }).click();
+  await page.getByLabel("SKU", { exact: true }).fill(sku);
+  for (const field of ["Arabic name", "French name", "English name"])
+    await page.getByLabel(field, { exact: true }).fill(sku);
+  await page.getByLabel("Category", { exact: true }).selectOption({ index: 0 });
+  await page.getByLabel("Price (MAD)", { exact: true }).fill("55");
+  await page.getByLabel("Active", { exact: true }).check();
+  await page.getByLabel("Published", { exact: true }).check();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aMycAAAAASUVORK5CYII=",
+    "base64",
+  );
+  await page
+    .locator("input[type=file]")
+    .setInputFiles(
+      ["first.png", "second.png"].map((name) => ({
+        name,
+        mimeType: "image/png",
+        buffer: png,
+      })),
+    );
+  await expect(page.locator(".thumbs img")).toHaveCount(2);
+  await page.getByRole("button", { name: "Inventory", exact: true }).click();
+  await page
+    .getByLabel("Product and stock")
+    .selectOption({ label: sku + " · 0" });
+  await page.getByLabel("Adjustment (+/−)").fill("4");
+  await page.getByLabel("Reason").fill("Verified fixture count");
+  await page.getByRole("button", { name: "Adjust inventory" }).click();
+  await expect(page.getByRole("status")).toHaveText("Saved");
+  await page.goto("/products/" + sku);
+  await expect(page.getByRole("heading", { name: sku })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add to bag" })).toBeEnabled();
+  await expect(page.locator(".thumbs button")).toHaveCount(2);
+  await expect(page.locator(".detailImg")).toHaveJSProperty("naturalWidth", 1);
+});

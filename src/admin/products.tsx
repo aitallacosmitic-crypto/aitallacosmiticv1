@@ -1,3 +1,4 @@
+import { assetUrl, assetRef } from "../assets";
 import { AssetUpload, Languages } from "./assets";
 import { useState } from "react";
 import { db } from "../db";
@@ -62,7 +63,7 @@ export function Products() {
             {t("إغلاق", "Fermer", "Close")}
           </button>
           <Editor
-            key={id}
+            key={id + Boolean(p)}
             fields={fields}
             initial={p as unknown as Row}
             busy={job.busy}
@@ -101,7 +102,7 @@ export function Products() {
                       )
                     }
                   >
-                    <img alt="×" src={img.url} />×
+                    <img alt="×" src={assetUrl(img.url)} />×
                   </button>
                 ))}
               </div>
@@ -130,13 +131,13 @@ export function Products() {
                           p.id + "/" + crypto.randomUUID() + "." + ext;
                         const bucket = db!.storage.from("product-images");
                         check(await bucket.upload(path, file));
-                        const result = await db!
-                          .from("product_images")
-                          .insert({
-                            product_id: p.id,
-                            url: bucket.getPublicUrl(path).data.publicUrl,
-                            position: p.product_images.length + i,
-                          });
+                        const result = await db!.from("product_images").insert({
+                          product_id: p.id,
+                          url: assetRef(
+                            bucket.getPublicUrl(path).data.publicUrl,
+                          ),
+                          position: p.product_images.length + i,
+                        });
                         if (result.error) {
                           await bucket.remove([path]);
                           throw result.error;
@@ -234,12 +235,24 @@ export function Resources({
             { k: "free_threshold", type: "number", min: 0, optional: true },
             { k: "cod", type: "checkbox" },
             { k: "wa_confirmation", type: "checkbox" },
-            ...["hero_url", "instagram_url", "facebook_url"].map((k) => ({
+            { k: "campaign_active", type: "checkbox" },
+            { k: "campaign_start", type: "datetime-local", optional: true },
+            { k: "campaign_end", type: "datetime-local", optional: true },
+            ...[
+              "logo_url",
+              "campaign_url",
+              "hero_url",
+              "instagram_url",
+              "facebook_url",
+            ].map((k) => ({
               k,
               type: "url" as const,
               optional: true,
             })),
             ...[
+              "campaign_ar",
+              "campaign_fr",
+              "campaign_en",
               "announcement_ar",
               "announcement_fr",
               "announcement_en",
@@ -292,10 +305,23 @@ export function Resources({
         <Editor
           fields={fields}
           key={id + type + job.revision}
-          initial={row}
+          initial={
+            row
+              ? {
+                  ...row,
+                  ...Object.fromEntries(
+                    ["hero_url", "logo_url", "campaign_url"]
+                      .filter((k) => row[k])
+                      .map((k) => [k, assetUrl(String(row[k]))]),
+                  ),
+                }
+              : row
+          }
           busy={job.busy}
           save={(r) =>
             job.run(async () => {
+              for (const k of ["hero_url", "logo_url", "campaign_url"])
+                if (r[k]) r[k] = assetRef(String(r[k]));
               if (type === "promotions") r.code = String(r.code).toUpperCase();
               check(
                 await (
@@ -316,20 +342,40 @@ export function Resources({
       )}
       {settings && row && (
         <>
-          <AssetUpload
-            bucket="homepage-banners"
-            save={async (url) => {
-              check(
-                await db!
-                  .from(type)
-                  .update({ hero_url: url })
-                  .eq("id", true)
-                  .select()
-                  .single(),
-              );
-              await refresh();
-            }}
-          />
+          {(
+            [
+              [
+                "hero_url",
+                "homepage-banners",
+                t("الغلاف", "Couverture", "Hero image"),
+              ],
+              ["logo_url", "brand-assets", t("الشعار", "Logo", "Brand logo")],
+              [
+                "campaign_url",
+                "homepage-banners",
+                t("الحملة", "Campagne", "Campaign image"),
+              ],
+            ] as const
+          ).map(([field, bucket, title]) => (
+            <section key={field}>
+              <h3>{title}</h3>
+              <AssetUpload
+                bucket={bucket}
+                save={async (url) => {
+                  check(
+                    await db!
+                      .from(type)
+                      .update({ [field]: url })
+                      .eq("id", true)
+                      .select("id")
+                      .single(),
+                  );
+                  job.reload();
+                  await refresh();
+                }}
+              />
+            </section>
+          ))}
           <Languages />
         </>
       )}

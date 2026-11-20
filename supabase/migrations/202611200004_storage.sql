@@ -1,4 +1,33 @@
-insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types) select name,name,true,5242880,array['image/jpeg','image/png','image/webp'] from unnest(array['product-images','brand-assets','homepage-banners','category-images']) name;
-create policy store_asset_upload on storage.objects for insert to authenticated with check(((bucket_id in ('product-images','category-images') and private.staff('product_manager')) or (bucket_id in ('brand-assets','homepage-banners') and private.staff('super_admin'))) and lower(storage.extension(name)) in ('jpg','jpeg','webp','png'));
-create policy store_asset_remove on storage.objects for delete to authenticated using((bucket_id in ('product-images','category-images') and private.staff('product_manager')) or (bucket_id in ('brand-assets','homepage-banners') and private.staff('super_admin')));
-create policy store_asset_manage_read on storage.objects for select to authenticated using((bucket_id in ('product-images','category-images') and private.staff('product_manager')) or (bucket_id in ('brand-assets','homepage-banners') and private.staff('super_admin')));
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+SELECT
+  name,
+  name,
+  TRUE,
+  5242880,
+  ARRAY['image/jpeg', 'image/png', 'image/webp']
+FROM
+  unnest(ARRAY['product-images', 'brand-assets', 'homepage-banners', 'category-images'])
+  name;
+
+CREATE POLICY store_asset_upload ON storage.objects
+  FOR INSERT TO authenticated
+  WITH CHECK (((bucket_id IN ('product-images', 'category-images')
+  AND private.staff ('product_manager'))
+  OR (bucket_id IN ('brand-assets', 'homepage-banners')
+  AND private.staff ('super_admin')))
+  AND lower(storage.extension (name)) IN ('jpg', 'jpeg', 'webp', 'png'));
+
+CREATE POLICY store_asset_remove ON storage.objects
+  FOR DELETE TO authenticated
+  USING ((bucket_id IN ('product-images', 'category-images')
+    AND private.staff ('product_manager'))
+    OR (bucket_id IN ('brand-assets', 'homepage-banners')
+    AND private.staff ('super_admin')));
+
+CREATE POLICY store_asset_manage_read ON storage.objects
+  FOR SELECT TO authenticated
+  USING ((bucket_id IN ('product-images', 'category-images')
+    AND private.staff ('product_manager'))
+    OR (bucket_id IN ('brand-assets', 'homepage-banners')
+    AND private.staff ('super_admin')));
+

@@ -28,7 +28,7 @@ export function useJob() {
       B(false);
     }
   };
-  return { busy, msg, revision, run };
+  return { busy, msg, revision, run, reload: () => R((v) => v + 1) };
 }
 export function check<T>(r: { data: T; error: unknown }): T {
   if (r.error) throw r.error;
@@ -113,6 +113,26 @@ export function exportCSV(
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 const words: Record<string, [string, string, string]> = {
+  logo_url: ["رابط الشعار", "URL du logo", "Logo URL"],
+  campaign_url: ["صورة الحملة", "Image de campagne", "Campaign image URL"],
+  campaign_ar: [
+    "نص الحملة بالعربية",
+    "Campagne en arabe",
+    "Arabic campaign text",
+  ],
+  campaign_fr: [
+    "نص الحملة بالفرنسية",
+    "Campagne en français",
+    "French campaign text",
+  ],
+  campaign_en: [
+    "نص الحملة بالإنجليزية",
+    "Campagne en anglais",
+    "English campaign text",
+  ],
+  campaign_active: ["عرض الحملة", "Afficher la campagne", "Show campaign"],
+  campaign_start: ["بداية الحملة", "Début de la campagne", "Campaign starts"],
+  campaign_end: ["نهاية الحملة", "Fin de la campagne", "Campaign ends"],
   sku: ["رمز المنتج", "SKU", "SKU"],
   name_ar: ["الاسم بالعربية", "Nom arabe", "Arabic name"],
   name_fr: ["الاسم بالفرنسية", "Nom français", "French name"],

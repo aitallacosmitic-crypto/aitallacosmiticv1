@@ -1,3 +1,4 @@
+import { assetRef } from "../assets";
 import { useState } from "react";
 import { db } from "../db";
 import { useStore } from "../store";
@@ -41,7 +42,7 @@ export function AssetUpload({
                 b = db!.storage.from(bucket);
               check(await b.upload(path, file));
               try {
-                await save(b.getPublicUrl(path).data.publicUrl);
+                await save(assetRef(b.getPublicUrl(path).data.publicUrl));
               } catch (error) {
                 await b.remove([path]);
                 throw error;

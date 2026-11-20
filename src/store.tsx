@@ -1,3 +1,4 @@
+import { assetUrl } from "./assets";
 import {
   createContext,
   useContext,
@@ -72,9 +73,30 @@ function useStateModel() {
       db.from("site_settings").select("*").single(),
     ]);
     setFailed(!!(p.error || c.error || s.error));
-    if (p.data) setProducts(p.data);
-    if (c.data) setCategories(c.data);
-    if (s.data) setSettings(s.data);
+    if (p.data)
+      setProducts(
+        p.data.map((p) => ({
+          ...p,
+          product_images: p.product_images.map(
+            (im: Product["product_images"][number]) => ({
+              ...im,
+              url: assetUrl(im.url),
+            }),
+          ),
+        })),
+      );
+    if (c.data)
+      setCategories(
+        c.data.map((c) => ({
+          ...c,
+          image_url: c.image_url ? assetUrl(c.image_url) : null,
+        })),
+      );
+    if (s.data)
+      setSettings({
+        ...s.data,
+        hero_url: s.data.hero_url ? assetUrl(s.data.hero_url) : null,
+      });
     setLoading(false);
   }, []);
   useEffect(() => {

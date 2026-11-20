@@ -1,3 +1,4 @@
+import { assetUrl } from "./assets";
 import { ArrowLeft, ArrowRight, Heart, Leaf, ShoppingBag } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useStore } from "./store";
@@ -10,12 +11,17 @@ export function Arrow({ size = 18 }: { size?: number }) {
   );
 }
 export function Mark() {
+  const { settings } = useStore();
   return (
     <Link to="/" className="brand" aria-label="Ait Alla Cosmetic">
-      <span className="seal">
-        AA
-        <Leaf size={10} />
-      </span>
+      {settings.logo_url ? (
+        <img className="brandAsset" src={assetUrl(settings.logo_url)} alt="" />
+      ) : (
+        <span className="seal">
+          AA
+          <Leaf size={10} />
+        </span>
+      )}
       <span className="wordmark">
         Ait Alla<small>COSMETIC</small>
       </span>
@@ -79,13 +85,13 @@ export function Card({ p }: { p: Product }) {
   const { lang, t, money, heart, wishlist } = useStore();
   return (
     <article className="pCard">
-      <Link className="pImage" to={"/products/" + p.sku}>
+      <Link
+        className="pImage"
+        aria-label={p[`name_${lang}`]}
+        to={"/products/" + p.sku}
+      >
         {photo(p) && (
-          <img
-            src={photo(p)}
-            loading="lazy"
-            alt={p[("name_" + lang) as "name_ar"]}
-          />
+          <img src={photo(p)} loading="lazy" alt={p[`name_${lang}`]} />
         )}
       </Link>
       <button

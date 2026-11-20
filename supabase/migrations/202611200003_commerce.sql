@@ -1,49 +1,334 @@
 -- Only IDs, quantities, code and delivery information come from the browser.
-create function private.quote(cart jsonb,coupon text) returns jsonb language plpgsql set search_path='' as $$
-declare r record;p public.products;s public.site_settings;promo public.promotions;unit numeric;line numeric;gross numeric:=0;net numeric:=0;fee numeric;lines jsonb:='[]';begin
-if length(coalesce(coupon,''))>40 or octet_length(cart::text)>12000 then raise exception 'Invalid request';end if;
-if cart is null or jsonb_typeof(cart)<>'array' or jsonb_array_length(cart) not between 1 and 50 then raise exception 'Invalid cart';end if;
-if exists(select 1 from jsonb_array_elements(cart) x group by x->>'id' having count(*)>1) then raise exception 'Duplicate item';end if;
-select * into strict s from public.site_settings where id;
-for r in select (x->>'id')::uuid id,(x->>'qty')::int qty from jsonb_array_elements(cart) x order by 1 loop
-select * into strict p from public.products where id=r.id and active and published for update;
-if r.qty is null or r.qty not between 1 and 99 or p.stock<r.qty then raise exception 'Stock unavailable';end if;
-unit:=coalesce(p.sale_price,p.price);line:=round(unit*r.qty*(1-greatest(case when r.qty>=2 then p.tier_two else 0 end,case when r.qty>=3 then p.tier_three else 0 end)/100),2);
-gross:=gross+p.price*r.qty;net:=net+line;lines:=lines||jsonb_build_object('id',p.id,'qty',r.qty,'unit',p.price,'line',line,'name_ar',p.name_ar,'name_fr',p.name_fr,'name_en',p.name_en);end loop;
-if nullif(trim(coupon),'') is not null then select * into promo from public.promotions where code=upper(trim(coupon)) and active and (starts_at is null or starts_at<=now()) and (ends_at is null or ends_at>now()) and minimum<=net for update;
-if not found or (promo.usage_limit is not null and (select count(*) from public.promotion_usage where promotion_id=promo.id)>=promo.usage_limit) then raise exception 'Invalid promotion';end if;
-net:=greatest(0,net-case when promo.kind='percent' then round(net*promo.amount/100,2) else promo.amount end);end if;
-fee:=case when net>=s.free_threshold then 0 else s.shipping_fee end;
-return jsonb_build_object('subtotal',gross,'discount',gross-net,'shipping',fee,'total',net+fee,'lines',lines,'promo',promo.id);end $$;
-create function public.quote_order(cart jsonb,coupon text default '') returns jsonb language plpgsql security definer set search_path='' as $$ begin if auth.uid() is null then raise exception 'Sign in required';end if;return private.quote(cart,coupon)-'promo';end $$;
-create function public.place_order(cart jsonb,coupon text,delivery jsonb,request_key uuid,expected_total numeric) returns uuid language plpgsql security definer set search_path='' as $$
-declare u uuid:=auth.uid();q jsonb;oid uuid;prior jsonb;l jsonb;payload jsonb:=jsonb_build_array(cart,coupon,delivery,expected_total);begin
-if jsonb_typeof(delivery) is distinct from 'object' or octet_length(delivery::text)>6000 or octet_length(cart::text)>12000 or length(coalesce(coupon,''))>40 then raise exception 'Invalid request';end if;
-if u is null or request_key is null then raise exception 'Sign in required';end if;
-perform 1 from public.customers where id=u and active for update;if not found then raise exception 'Account unavailable';end if;
-select id,request into oid,prior from public.orders where user_id=u and idempotency_key=request_key;if found then if prior<>payload then raise exception 'Conflicting retry';end if;return oid;end if;
-if (select count(*) from public.orders where user_id=u and created_at>now()-interval '1 hour')>=5 then raise exception 'Order limit reached';end if;
-if not (select cod from public.site_settings where id) then raise exception 'Checkout unavailable';end if;
-if not(coalesce(length(trim(delivery->>'name')),0) between 2 and 100 and coalesce(delivery->>'phone','') ~ '^\+?[0-9 ]{8,20}$' and coalesce(length(trim(delivery->>'city')),0) between 1 and 100 and coalesce(length(trim(delivery->>'address')),0) between 5 and 500 and length(coalesce(delivery->>'instructions',''))<=500) then raise exception 'Invalid delivery information';end if;
-q:=private.quote(cart,coupon);if expected_total is distinct from (q->>'total')::numeric then raise exception 'Price changed; review your order';end if;
-insert into public.orders(user_id,idempotency_key,request,name,phone,city,address,instructions,subtotal,discount,shipping,total) values(u,request_key,payload,trim(delivery->>'name'),delivery->>'phone',trim(delivery->>'city'),trim(delivery->>'address'),coalesce(delivery->>'instructions',''),(q->>'subtotal')::numeric,(q->>'discount')::numeric,(q->>'shipping')::numeric,expected_total) returning id into oid;
-for l in select * from jsonb_array_elements(q->'lines') loop
-insert into public.order_items(order_id,product_id,name_ar,name_fr,name_en,quantity,unit_price,line_total) values(oid,(l->>'id')::uuid,l->>'name_ar',l->>'name_fr',l->>'name_en',(l->>'qty')::int,(l->>'unit')::numeric,(l->>'line')::numeric);
-update public.products set stock=stock-(l->>'qty')::int,sold=sold+(l->>'qty')::int where id=(l->>'id')::uuid;
-insert into public.inventory_movements(product_id,quantity,reason,order_id,actor) values((l->>'id')::uuid,-(l->>'qty')::int,'order',oid,u);end loop;
-if q->>'promo' is not null then insert into public.promotion_usage(promotion_id,order_id) values((q->>'promo')::uuid,oid);end if;
-insert into public.order_status_history(order_id,status) values(oid,'pending');return oid;end $$;
-create function public.adjust_stock(product uuid,delta integer,reason text) returns void language plpgsql security definer set search_path='' as $$ begin
-if not private.staff('product_manager') or delta is null or delta=0 or coalesce(length(trim(reason)),0) not between 1 and 300 then raise exception 'Adjustment rejected';end if;
-update public.products set stock=stock+delta where id=product and stock+delta>=0;if not found then raise exception 'Invalid stock';end if;
-insert into public.inventory_movements(product_id,quantity,reason,actor) values(product,delta,reason,auth.uid());end $$;
-create function public.update_order(oid uuid,next_status public.order_state,tracking_number text) returns void language plpgsql security definer set search_path='' as $$ declare current_state public.order_state;r record;begin
-if not private.staff('order_manager') or coalesce(length(tracking_number),0)>160 then raise exception 'Update rejected';end if;select status into strict current_state from public.orders where id=oid for update;
-if current_state<>next_status and not ((current_state='pending' and next_status in ('confirmed','cancelled')) or (current_state='confirmed' and next_status in ('preparing','cancelled')) or (current_state='preparing' and next_status in ('shipped','cancelled')) or (current_state='shipped' and next_status in ('delivered','returned')) or (current_state='delivered' and next_status='returned')) then raise exception 'Invalid transition';end if;
-if current_state<>next_status then insert into public.order_status_history(order_id,status) values(oid,next_status);
-if next_status in ('cancelled','returned') then for r in select * from public.order_items where order_id=oid order by product_id loop update public.products set stock=stock+r.quantity,sold=sold-r.quantity where id=r.product_id;insert into public.inventory_movements(product_id,quantity,reason,order_id,actor) values(r.product_id,r.quantity,next_status::text,oid,auth.uid());end loop;end if;end if;
-update public.orders set status=next_status,tracking=coalesce(tracking_number,'') where id=oid;end $$;
-revoke all on all functions in schema private from public;
-grant execute on function private.staff(public.staff_role[]) to anon,authenticated;
-revoke all on function public.place_order(jsonb,text,jsonb,uuid,numeric),public.quote_order(jsonb,text),public.adjust_stock(uuid,integer,text),public.update_order(uuid,public.order_state,text) from public,anon;
-grant execute on function public.place_order(jsonb,text,jsonb,uuid,numeric),public.quote_order(jsonb,text),public.adjust_stock(uuid,integer,text),public.update_order(uuid,public.order_state,text) to authenticated;
+CREATE FUNCTION private.quote (cart jsonb, coupon text)
+  RETURNS jsonb
+  LANGUAGE plpgsql
+  SET search_path = ''
+  AS $$
+DECLARE
+  r record;
+  p public.products;
+  s public.site_settings;
+  promo public.promotions;
+  unit numeric;
+  line numeric;
+  gross numeric := 0;
+  net numeric := 0;
+  fee numeric;
+  lines jsonb := '[]';
+BEGIN
+  IF length(coalesce(coupon, '')) > 40 OR octet_length(cart::text) > 12000 THEN
+    RAISE EXCEPTION 'Invalid request';
+  END IF;
+  IF cart IS NULL OR jsonb_typeof(cart) <> 'array' OR jsonb_array_length(cart)
+    NOT BETWEEN 1 AND 50 THEN
+    RAISE EXCEPTION 'Invalid cart';
+  END IF;
+  IF EXISTS (
+    SELECT
+      1
+    FROM
+      jsonb_array_elements(cart) x
+    GROUP BY
+      x ->> 'id'
+    HAVING
+      count(*) > 1) THEN
+  RAISE EXCEPTION 'Duplicate item';
+END IF;
+  SELECT
+    *
+  INTO
+    STRICT s
+  FROM
+    public.site_settings
+  WHERE
+    id;
+  FOR r IN
+  SELECT
+    (x ->> 'id')::uuid id,
+    (x ->> 'qty')::int qty
+  FROM
+    jsonb_array_elements(cart) x
+ORDER BY
+  1 LOOP
+    SELECT
+      *
+    INTO
+      STRICT p
+    FROM
+      public.products
+    WHERE
+      id = r.id
+      AND active
+      AND published
+    FOR UPDATE;
+    IF r.qty IS NULL OR r.qty NOT BETWEEN 1 AND 99 OR p.stock < r.qty THEN
+      RAISE EXCEPTION 'Stock unavailable';
+    END IF;
+    unit := coalesce(p.sale_price, p.price);
+    line := round(unit * r.qty * (1 - greatest (
+          CASE WHEN r.qty >= 2 THEN
+            p.tier_two
+          ELSE
+            0
+          END, CASE WHEN r.qty >= 3 THEN
+            p.tier_three
+          ELSE
+            0
+          END) / 100), 2);
+    gross := gross + p.price * r.qty;
+    net := net + line;
+    lines := lines || jsonb_build_object('id', p.id, 'qty', r.qty, 'unit', p.price, 'line', line, 'name_ar', p.name_ar, 'name_fr', p.name_fr, 'name_en', p.name_en);
+  END LOOP;
+  IF nullif (trim(coupon), '') IS NOT NULL THEN
+    SELECT
+      *
+    INTO
+      promo
+    FROM
+      public.promotions
+    WHERE
+      code = upper(trim(coupon))
+      AND active
+      AND (starts_at IS NULL
+        OR starts_at <= now())
+      AND (ends_at IS NULL
+        OR ends_at > now())
+      AND minimum <= net
+    FOR UPDATE;
+    IF NOT found OR (promo.usage_limit IS NOT NULL AND (
+      SELECT
+        count(*)
+      FROM
+        public.promotion_usage
+      WHERE
+        promotion_id = promo.id) >= promo.usage_limit) THEN
+      RAISE EXCEPTION 'Invalid promotion';
+    END IF;
+    net := greatest (0, net - CASE WHEN promo.kind = 'percent' THEN
+        round(net * promo.amount / 100, 2)
+      ELSE
+        promo.amount
+      END);
+  END IF;
+  fee := CASE WHEN net >= s.free_threshold THEN
+    0
+  ELSE
+    s.shipping_fee
+  END;
+  RETURN jsonb_build_object('subtotal', gross, 'discount', gross - net, 'shipping', fee, 'total', net + fee, 'lines', lines, 'promo', promo.id);
+END
+$$;
+
+CREATE FUNCTION public.quote_order (cart jsonb, coupon text DEFAULT '') returns jsonb language plpgsql security definer set search_path=''
+AS $$
+BEGIN
+  IF auth.uid () IS NULL THEN
+    RAISE EXCEPTION 'Sign in required';
+  END IF;
+  RETURN private.quote (cart, coupon) - 'promo';
+END
+$$;
+
+CREATE FUNCTION public.place_order (cart jsonb, coupon text, delivery jsonb, request_key uuid, expected_total numeric)
+  RETURNS uuid
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path = ''
+  AS $$
+DECLARE
+  u uuid := auth.uid ();
+  q jsonb;
+  oid uuid;
+  prior jsonb;
+  l jsonb;
+  payload jsonb := jsonb_build_array(cart, coupon, delivery, expected_total);
+BEGIN
+  IF jsonb_typeof(delivery) IS DISTINCT FROM 'object' OR octet_length(delivery::text) > 6000 OR octet_length(cart::text) > 12000 OR length(coalesce(coupon, '')) > 40 THEN
+    RAISE EXCEPTION 'Invalid request';
+  END IF;
+  IF u IS NULL OR request_key IS NULL THEN
+    RAISE EXCEPTION 'Sign in required';
+  END IF;
+  PERFORM
+    1
+  FROM
+    public.customers
+  WHERE
+    id = u
+    AND active
+  FOR UPDATE;
+  IF NOT found THEN
+    RAISE EXCEPTION 'Account unavailable';
+  END IF;
+  SELECT
+    id,
+    request
+  INTO
+    oid,
+    prior
+  FROM
+    public.orders
+  WHERE
+    user_id = u
+    AND idempotency_key = request_key;
+  IF found THEN
+    IF prior <> payload THEN
+      RAISE EXCEPTION 'Conflicting retry';
+    END IF;
+    RETURN oid;
+  END IF;
+  IF (
+    SELECT
+      count(*)
+    FROM
+      public.orders
+    WHERE
+      user_id = u AND created_at > now() - interval '1 hour') >= 5 THEN
+    RAISE EXCEPTION 'Order limit reached';
+  END IF;
+  IF NOT (
+    SELECT
+      cod
+    FROM
+      public.site_settings
+    WHERE
+      id) THEN
+    RAISE EXCEPTION 'Checkout unavailable';
+  END IF;
+  IF NOT (coalesce(length(trim(delivery ->> 'name')), 0) BETWEEN 2 AND 100 AND coalesce(delivery ->> 'phone', '') ~ '^\+?[0-9 ]{8,20}$' and coalesce(length(trim(delivery->>'city')),0) between 1 and 100 and coalesce(length(trim(delivery->>'address')),0) between 5 and 500 and length(coalesce(delivery->>'instructions','')) <= 500) THEN
+    RAISE EXCEPTION 'Invalid delivery information';
+  END IF;
+  q := private.quote (cart, coupon);
+  IF expected_total IS DISTINCT FROM (q ->> 'total')::numeric THEN
+    RAISE EXCEPTION 'Price changed; review your order';
+  END IF;
+  INSERT INTO public.orders (user_id, idempotency_key, request, name, phone, city, address, instructions, subtotal, discount, shipping, total)
+  VALUES
+    (u, request_key, payload, trim(delivery ->> 'name'), delivery ->> 'phone', trim(delivery ->> 'city'), trim(delivery ->> 'address'), coalesce(delivery ->> 'instructions', ''),
+      (q ->> 'subtotal')::numeric, (q ->> 'discount')::numeric, (q ->> 'shipping')::numeric, expected_total)
+  RETURNING
+    id
+  INTO
+    oid;
+  FOR l IN
+  SELECT
+    *
+  FROM
+    jsonb_array_elements(q -> 'lines')
+    LOOP
+      INSERT INTO public.order_items (order_id, product_id, name_ar, name_fr, name_en, quantity, unit_price, line_total)
+        VALUES (oid, (l ->> 'id')::uuid, l ->> 'name_ar', l ->> 'name_fr', l ->> 'name_en', (l ->> 'qty')::int, (l ->> 'unit')::numeric, (l ->> 'line')::numeric);
+      UPDATE
+        public.products
+      SET
+        stock = stock - (l ->> 'qty')::int,
+        sold = sold + (l ->> 'qty')::int
+      WHERE
+        id = (l ->> 'id')::uuid;
+      INSERT INTO public.inventory_movements (product_id, quantity, reason, order_id, actor)
+        VALUES ((l ->> 'id')::uuid, - (l ->> 'qty')::int, 'order', oid, u);
+    END LOOP;
+  IF q ->> 'promo' IS NOT NULL THEN
+    INSERT INTO public.promotion_usage (promotion_id, order_id)
+      VALUES ((q ->> 'promo')::uuid, oid);
+  END IF;
+  INSERT INTO public.order_status_history (order_id, status)
+    VALUES (oid, 'pending');
+  RETURN oid;
+END
+$$;
+
+CREATE FUNCTION public.adjust_stock (product uuid, delta integer, reason text)
+  RETURNS void
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path = ''
+  AS $$
+BEGIN
+  IF NOT private.staff ('product_manager') OR delta IS NULL OR delta = 0 OR coalesce(length(trim(reason)), 0)
+    NOT BETWEEN 1 AND 300 THEN
+    RAISE EXCEPTION 'Adjustment rejected';
+  END IF;
+  UPDATE
+    public.products
+  SET
+    stock = stock + delta
+  WHERE
+    id = product
+    AND stock + delta >= 0;
+  IF NOT found THEN
+    RAISE EXCEPTION 'Invalid stock';
+  END IF;
+  INSERT INTO public.inventory_movements (product_id, quantity, reason, actor)
+    VALUES (product, delta, reason, auth.uid ());
+END
+$$;
+
+CREATE FUNCTION public.update_order (oid uuid, next_status public.order_state, tracking_number text)
+  RETURNS void
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path = ''
+  AS $$
+DECLARE
+  current_state public.order_state;
+  r record;
+BEGIN
+  IF NOT private.staff ('order_manager') OR coalesce(length(tracking_number), 0) > 160 THEN
+    RAISE EXCEPTION 'Update rejected';
+  END IF;
+  SELECT
+    status
+  INTO
+    STRICT current_state
+  FROM
+    public.orders
+  WHERE
+    id = oid
+  FOR UPDATE;
+  IF current_state <> next_status AND NOT ((current_state = 'pending' AND next_status IN ('confirmed', 'cancelled')) OR (current_state = 'confirmed' AND next_status IN ('preparing', 'cancelled')) OR (current_state = 'preparing' AND next_status IN ('shipped', 'cancelled')) OR (current_state = 'shipped' AND next_status IN ('delivered', 'returned')) OR (current_state = 'delivered' AND next_status = 'returned')) THEN
+    RAISE EXCEPTION 'Invalid transition';
+  END IF;
+  IF current_state <> next_status THEN
+    INSERT INTO public.order_status_history (order_id, status)
+      VALUES (oid, next_status);
+    IF next_status IN ('cancelled', 'returned') THEN
+      FOR r IN
+      SELECT
+        *
+      FROM
+        public.order_items
+      WHERE
+        order_id = oid
+      ORDER BY
+        product_id LOOP
+          UPDATE
+            public.products
+          SET
+            stock = stock + r.quantity,
+            sold = sold - r.quantity
+          WHERE
+            id = r.product_id;
+          INSERT INTO public.inventory_movements (product_id, quantity, reason, order_id, actor)
+            VALUES (r.product_id, r.quantity, next_status::text, oid, auth.uid ());
+        END LOOP;
+    END IF;
+  END IF;
+  UPDATE
+    public.orders
+  SET
+    status = next_status,
+    tracking = coalesce(tracking_number, '')
+  WHERE
+    id = oid;
+END
+$$;
+
+REVOKE ALL ON ALL functions IN SCHEMA private FROM public;
+
+GRANT EXECUTE ON FUNCTION private.staff (public.staff_role[]) TO anon, authenticated;
+
+REVOKE ALL ON FUNCTION public.place_order (jsonb, text, jsonb, uuid, numeric), public.quote_order (jsonb, text), public.adjust_stock (uuid, integer, text), public.update_order (uuid, public.order_state, text) FROM public, anon;
+
+GRANT EXECUTE ON FUNCTION public.place_order (jsonb, text, jsonb, uuid, numeric), public.quote_order (jsonb, text), public.adjust_stock (uuid, integer, text), public.update_order (uuid, public.order_state, text) TO authenticated;
+

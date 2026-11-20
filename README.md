@@ -85,3 +85,5 @@ GitHub hosts source and Actions, **not** the live commerce backend. `.github/wor
 4. Attach your verified HTTPS domain, update Supabase Auth redirect allowlists, redeploy, check deep links and reset emails. Inspect browser logs for CSP issues if using a custom backend domain. Set up backups, monitoring, email delivery, incident contact and legal review before accepting real orders.
 
 Never commit `.env*` (except the empty `.env.example`), DB dumps or customer exports. Original `index.html` is preserved in the base Git revision documented in the audit.
+
+`0008_asset_paths` allows validated bucket-relative image references in addition to the original HTTPS URLs. Uploaded image references therefore work on both the local CLI gateway and a hosted HTTPS project. The build rejects a secret or service-role key in the public Supabase-key setting.

@@ -1,3 +1,4 @@
+import { assetUrl } from "./assets";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -185,6 +186,27 @@ export default function Home() {
         </div>
       </section>
       <Benefits />
+      {settings.campaign_active &&
+        settings[`campaign_${lang}`] &&
+        (!settings.campaign_start ||
+          Date.parse(settings.campaign_start) <= Date.now()) &&
+        (!settings.campaign_end ||
+          Date.parse(settings.campaign_end) > Date.now()) && (
+          <aside className="wrap campaignStrip">
+            {settings.campaign_url && (
+              <img
+                src={assetUrl(settings.campaign_url)}
+                alt=""
+                loading="lazy"
+              />
+            )}
+            <p>{settings[`campaign_${lang}`]}</p>
+            <Link className="textLink" to="/catalog">
+              {t("اكتشفي العرض", "Découvrir l’offre", "Explore the offer")}{" "}
+              <Arrow />
+            </Link>
+          </aside>
+        )}
       <section className="categories wrap">
         <div className="sectionHead">
           <div>
