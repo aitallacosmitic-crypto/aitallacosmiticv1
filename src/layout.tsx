@@ -1,5 +1,5 @@
 import Metadata from "./meta";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   Link,
   NavLink,
@@ -47,10 +47,10 @@ export default function Layout() {
   const loc = useLocation(),
     nav = useNavigate(),
     head = useRef<HTMLElement>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     P("");
     window.scrollTo(0, 0);
-  }, [loc.pathname, loc.search, lang, settings.brand]);
+  }, [loc.pathname, loc.search]);
   useEffect(() => {
     const close = (e: KeyboardEvent) => {
       if (e.key === "Escape") P("");

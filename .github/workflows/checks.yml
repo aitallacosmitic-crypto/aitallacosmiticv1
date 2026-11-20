@@ -6,8 +6,8 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: npm test
@@ -18,8 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - uses: supabase/setup-cli@v1
@@ -35,4 +35,5 @@ jobs:
           export DISPOSABLE_SUPABASE=yes
           node tests/service-integration.mjs
           export VITE_SUPABASE_URL="$API_URL" VITE_SUPABASE_PUBLISHABLE_KEY="$ANON_KEY"
+          VITE_SITE_URL=https://staging.example.test npm run build
           npx playwright test connected.spec.ts

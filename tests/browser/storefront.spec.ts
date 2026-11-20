@@ -19,6 +19,9 @@ test("Arabic storefront, gallery navigation, category link, search and empty car
     .first()
     .click();
   await expect(page).toHaveURL(/category=skin/);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "المتجر" }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "بحث", exact: true }).click();
   await page
     .getByRole("textbox", { name: "ابحثي عن منتج" })
