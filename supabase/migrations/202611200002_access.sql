@@ -1,0 +1,42 @@
+create schema if not exists private;
+revoke all on schema private from public;
+grant usage on schema private to anon,authenticated;
+create function private.staff(variadic roles public.staff_role[]) returns boolean language sql stable security definer set search_path='' as $$select exists(select from public.user_roles where user_id=(select auth.uid()) and (role='super_admin' or role=any(roles)))$$;
+revoke all on function private.staff(public.staff_role[]) from public;
+grant execute on function private.staff(public.staff_role[]) to anon,authenticated;
+create function private.new_user() returns trigger language plpgsql security definer set search_path='' as $$ begin
+ insert into public.profiles(id) values(new.id);insert into public.customers(id) values(new.id);insert into public.wishlists(user_id) values(new.id);return new;end $$;
+create trigger provision_customer after insert on auth.users for each row execute function private.new_user();
+insert into public.profiles(id) select id from auth.users on conflict do nothing;
+insert into public.customers(id) select id from auth.users on conflict do nothing;
+insert into public.wishlists(user_id) select id from auth.users on conflict do nothing;
+do $$ declare t text; begin foreach t in array array['profiles','user_roles','customers','addresses','categories','products','product_images','promotions','site_settings','orders','order_items','promotion_usage','reviews','wishlists','wishlist_items','inventory_movements','order_status_history','order_notes','admin_activity_logs'] loop
+execute format('alter table public.%I enable row level security',t);
+execute format('revoke all on public.%I from public, anon, authenticated',t);execute format('grant select on public.%I to authenticated',t);end loop;end $$;
+grant select on public.categories,public.products,public.product_images,public.reviews,public.site_settings to anon;
+create policy self_role on public.user_roles for select using(user_id=(select auth.uid()) or private.staff('super_admin'));
+create policy profile_read on public.profiles for select using(id=(select auth.uid()) or private.staff('order_manager','customer_support'));
+create policy profile_edit on public.profiles for update using(id=(select auth.uid())) with check(id=(select auth.uid()));grant update(display_name) on public.profiles to authenticated;
+create policy customer_read on public.customers for select using(id=(select auth.uid()) or private.staff('order_manager','customer_support'));
+create policy customer_edit on public.customers for update using(private.staff('super_admin'));grant update(active) on public.customers to authenticated;
+create policy owned_address on public.addresses for all using(user_id=(select auth.uid())) with check(user_id=(select auth.uid()));grant insert,update,delete on public.addresses to authenticated;
+create policy category_read on public.categories for select using(true);
+create policy product_read on public.products for select using((active and published) or private.staff('product_manager'));
+create policy image_read on public.product_images for select using(exists(select from public.products p where p.id=product_id));
+do $$ declare t text;begin foreach t in array array['categories','products','product_images','promotions'] loop execute format('create policy manage on public.%I for all using(private.staff(''product_manager'')) with check(private.staff(''product_manager''))',t);end loop;end $$;
+grant insert,update,delete on public.categories,public.product_images,public.promotions to authenticated;
+grant insert(sku,category_id,name_ar,name_fr,name_en,desc_ar,desc_fr,desc_en,price,sale_price,active,published,featured,tier_two,tier_three),update(sku,category_id,name_ar,name_fr,name_en,desc_ar,desc_fr,desc_en,price,sale_price,active,published,featured,tier_two,tier_three),delete on public.products to authenticated;
+create policy settings_read on public.site_settings for select using(true);create policy settings_edit on public.site_settings for update using(private.staff('super_admin'));grant update on public.site_settings to authenticated;
+create policy orders_read on public.orders for select using(user_id=(select auth.uid()) or private.staff('order_manager','customer_support'));
+create policy items_read on public.order_items for select using(exists(select from public.orders o where o.id=order_id));
+create policy history_read on public.order_status_history for select using(exists(select from public.orders o where o.id=order_id));
+create policy notes_staff on public.order_notes for select using(private.staff('order_manager','customer_support'));create policy notes_add on public.order_notes for insert with check(private.staff('order_manager','customer_support') and actor=auth.uid());grant insert(order_id,note) on public.order_notes to authenticated;
+create policy usage_read on public.promotion_usage for select using(private.staff('product_manager'));
+create policy review_read on public.reviews for select using((approved and exists(select from public.products p where p.id=product_id)) or user_id=(select auth.uid()) or private.staff('product_manager'));
+create policy review_add on public.reviews for insert with check(user_id=(select auth.uid()) and not approved and exists(select from public.orders o join public.order_items i on i.order_id=o.id where o.user_id=auth.uid() and o.status='delivered' and i.product_id=reviews.product_id));
+create policy review_moderate on public.reviews for update using(private.staff('product_manager'));grant insert(user_id,product_id,body,rating),update(approved) on public.reviews to authenticated;
+create policy list_read on public.wishlists for select using(user_id=(select auth.uid()));create policy list_items on public.wishlist_items for all using(exists(select from public.wishlists l where l.id=wishlist_id and l.user_id=auth.uid())) with check(exists(select from public.wishlists l where l.id=wishlist_id and l.user_id=auth.uid()));grant insert(wishlist_id,product_id),delete on public.wishlist_items to authenticated;
+create policy inventory_read on public.inventory_movements for select using(private.staff('product_manager'));create policy audit_read on public.admin_activity_logs for select using(private.staff('super_admin'));
+create function private.audit() returns trigger language plpgsql security definer set search_path='' as $$ begin
+insert into public.admin_activity_logs(actor,resource,operation,record_key) values(auth.uid(),tg_table_name,tg_op,coalesce(to_jsonb(new)->>'id',to_jsonb(old)->>'id'));return null;end $$;
+do $$ declare t text;begin foreach t in array array['user_roles','products','product_images','categories','promotions','orders','order_notes','customers','site_settings','reviews','inventory_movements'] loop execute format('create trigger audit_change after insert or update or delete on public.%I for each row execute function private.audit()',t);end loop;end $$;
